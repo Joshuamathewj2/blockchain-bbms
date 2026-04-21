@@ -1,0 +1,19 @@
+{
+  "name": "bloodchain",
+  "version": "1.0.0",
+  "description": "Decentralized Blood Bank Management System using Blockchain",
+  "scripts": {
+    "install:all": "npm install && cd backend && npm install && cd ../frontend && npm install",
+    "compile": "npx hardhat compile",
+    "deploy:local": "npx hardhat run scripts/deploy.js --network localhost",
+    "deploy:ganache": "npx hardhat run scripts/deploy.js --network ganache",
+    "backend": "cd backend && npm run dev",
+    "frontend": "cd frontend && npm start",
+    "node": "npx hardhat node"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^4.0.0",
+    "hardhat": "^2.19.4",
+    "dotenv": "^16.3.1"
+  }
+}

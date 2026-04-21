@@ -1,0 +1,7 @@
+node_modules/
+.env
+artifacts/
+cache/
+frontend/build/
+backend/node_modules/
+frontend/node_modules/
