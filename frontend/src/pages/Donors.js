@@ -1,7 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { getDonors, registerDonor, donateBlood } from '../utils/api';
+import { ethers } from 'ethers';
+import { useWallet } from '../context/WalletContext';
+import { getDonors, registerDonor, syncDonor, donateBlood, getDonorCertificateUrl } from '../utils/api';
+import ErrorBanner from '../components/ErrorBanner';
+import BloodBankABI from '../utils/BloodBankABI.json';
 
 const BLOOD_GROUPS = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
+const BG_MAP = { 'A+': 0, 'A-': 1, 'B+': 2, 'B-': 3, 'AB+': 4, 'AB-': 5, 'O+': 6, 'O-': 7 };
 
 function Toast({ toasts }) {
   return (
@@ -17,8 +22,10 @@ function Toast({ toasts }) {
 }
 
 export default function Donors() {
+  const { account, getSigner, isConnected } = useWallet();
   const [donors, setDonors] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [showRegister, setShowRegister] = useState(false);
   const [showDonate, setShowDonate] = useState(false);
   const [selectedDonor, setSelectedDonor] = useState(null);
@@ -39,28 +46,68 @@ export default function Donors() {
   };
 
   const loadDonors = () => {
+    setLoading(true);
     getDonors()
-      .then(r => setDonors(r.data))
-      .catch(() => setDonors([
-        { id: 1, wallet_address: '0xaaaa...0001', name: 'Arjun Kumar', blood_group: 'O+', age: 28, gender: 'Male', total_donations: 3, is_eligible: true, created_at: new Date().toISOString() },
-        { id: 2, wallet_address: '0xaaaa...0002', name: 'Priya Sharma', blood_group: 'A+', age: 24, gender: 'Female', total_donations: 1, is_eligible: true, created_at: new Date().toISOString() },
-        { id: 3, wallet_address: '0xaaaa...0003', name: 'Ravi Menon', blood_group: 'B-', age: 35, gender: 'Male', total_donations: 5, is_eligible: true, created_at: new Date().toISOString() },
-      ]))
+      .then(r => {
+        setDonors(r.data);
+        setError(null);
+      })
+      .catch((err) => {
+        setError('Could not fetch donor registry from server.');
+        if (process.env.REACT_APP_DEMO_MODE === 'true') {
+          setDonors([
+            { id: 1, wallet_address: '0xaaaa000000000000000000000000000000000001', name: 'Arjun Kumar', blood_group: 'O+', age: 28, gender: 'Male', total_donations: 3, is_eligible: true, created_at: new Date().toISOString() },
+            { id: 2, wallet_address: '0xaaaa000000000000000000000000000000000002', name: 'Priya Sharma', blood_group: 'A+', age: 24, gender: 'Female', total_donations: 1, is_eligible: true, created_at: new Date().toISOString() },
+            { id: 3, wallet_address: '0xaaaa000000000000000000000000000000000003', name: 'Ravi Menon', blood_group: 'B-', age: 35, gender: 'Male', total_donations: 5, is_eligible: true, created_at: new Date().toISOString() },
+          ]);
+        }
+      })
       .finally(() => setLoading(false));
   };
 
   useEffect(() => { loadDonors(); }, []);
 
+  useEffect(() => {
+    if (account && !form.wallet_address) {
+      setForm(f => ({ ...f, wallet_address: account }));
+    }
+  }, [account]);
+
+  // Client-Side MetaMask Transaction Signing (Fix 1.1)
   const handleRegister = async () => {
     if (!form.wallet_address || !form.name || !form.age) {
       return addToast('Please fill all required fields', 'error');
     }
     setSubmitting(true);
+    let txHash = null;
+
     try {
-      const res = await registerDonor(form);
-      addToast(`Donor registered! TX: ${res.data.txHash || 'DB saved'}`);
+      if (isConnected && BloodBankABI.address) {
+        try {
+          const signer = await getSigner();
+          if (signer) {
+            const contract = new ethers.Contract(BloodBankABI.address, BloodBankABI.abi, signer);
+            const tx = await contract.registerDonor(
+              form.name,
+              BG_MAP[form.blood_group],
+              parseInt(form.age),
+              form.contact || ''
+            );
+            addToast('Transaction submitted to MetaMask. Awaiting confirmation...');
+            await tx.wait();
+            txHash = tx.hash;
+            addToast(`On-chain transaction confirmed! TX: ${txHash.slice(0, 10)}...`);
+          }
+        } catch (bcErr) {
+          console.warn('Blockchain execution warning:', bcErr);
+          addToast(`Blockchain warning: ${bcErr.reason || bcErr.message}`, 'error');
+        }
+      }
+
+      await syncDonor({ ...form, txHash });
+      addToast('Donor registered successfully!');
       setShowRegister(false);
-      setForm({ wallet_address: '', name: '', blood_group: 'A+', age: '', gender: 'Male', contact: '', email: '', address: '' });
+      setForm({ wallet_address: account || '', name: '', blood_group: 'A+', age: '', gender: 'Male', contact: '', email: '', address: '' });
       loadDonors();
     } catch (e) {
       addToast(e.response?.data?.error || 'Registration failed', 'error');
@@ -70,12 +117,31 @@ export default function Donors() {
   const handleDonate = async () => {
     if (!selectedDonor) return;
     setSubmitting(true);
+    let txHash = null;
+
     try {
+      if (isConnected && BloodBankABI.address) {
+        try {
+          const signer = await getSigner();
+          if (signer) {
+            const contract = new ethers.Contract(BloodBankABI.address, BloodBankABI.abi, signer);
+            const tx = await contract.donateBlood(donateForm.hospital_name || 'BloodChain Center');
+            addToast('Donation tx submitted to MetaMask. Confirming...');
+            await tx.wait();
+            txHash = tx.hash;
+          }
+        } catch (bcErr) {
+          console.warn('BC transaction warning:', bcErr);
+        }
+      }
+
       const res = await donateBlood({
         donor_wallet: selectedDonor.wallet_address,
         blood_group: selectedDonor.blood_group,
         hospital_name: donateForm.hospital_name || 'BloodChain Center',
+        txHash,
       });
+
       addToast(`Blood unit recorded! Unit: ${(res.data.unitId || '').slice(0, 14)}...`);
       setShowDonate(false);
       loadDonors();
@@ -94,8 +160,10 @@ export default function Donors() {
       <Toast toasts={toasts} />
       <div className="page-header">
         <div className="page-title">◈ <span>Donor</span> Registry</div>
-        <div className="page-sub">Manage registered blood donors on-chain</div>
+        <div className="page-sub">Manage registered blood donors with client-side MetaMask identity</div>
       </div>
+
+      <ErrorBanner message={error} onRetry={loadDonors} />
 
       <div style={{ display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
         <input
@@ -147,13 +215,25 @@ export default function Donors() {
                       </span>
                     </td>
                     <td>
-                      <button
-                        className="btn btn-outline btn-sm"
-                        disabled={!d.is_eligible}
-                        onClick={() => { setSelectedDonor(d); setShowDonate(true); }}
-                      >
-                        🩸 Donate
-                      </button>
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <button
+                          className="btn btn-outline btn-sm"
+                          disabled={!d.is_eligible}
+                          onClick={() => { setSelectedDonor(d); setShowDonate(true); }}
+                        >
+                          🩸 Donate
+                        </button>
+                        <a
+                          href={getDonorCertificateUrl(d.wallet_address)}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="btn btn-outline btn-sm"
+                          style={{ textDecoration: 'none', color: '#00d4ff', borderColor: '#00d4ff' }}
+                          title="Download Digital Donor Certificate"
+                        >
+                          📜 Cert
+                        </a>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -179,6 +259,11 @@ export default function Donors() {
                 <label>Wallet Address *</label>
                 <input placeholder="0x..." value={form.wallet_address}
                   onChange={e => setForm({ ...form, wallet_address: e.target.value })} />
+                {isConnected && (
+                  <span style={{ fontSize: 11, color: '#00c97a', marginTop: 4 }}>
+                    Connected to MetaMask ({account.slice(0, 6)}...{account.slice(-4)})
+                  </span>
+                )}
               </div>
               <div className="form-group">
                 <label>Full Name *</label>
@@ -212,16 +297,11 @@ export default function Donors() {
                 <input type="email" placeholder="donor@email.com" value={form.email}
                   onChange={e => setForm({ ...form, email: e.target.value })} />
               </div>
-              <div className="form-group full">
-                <label>Address</label>
-                <input placeholder="City, State" value={form.address}
-                  onChange={e => setForm({ ...form, address: e.target.value })} />
-              </div>
             </div>
             <div className="modal-actions">
               <button className="btn btn-outline" onClick={() => setShowRegister(false)}>Cancel</button>
               <button className="btn btn-primary" onClick={handleRegister} disabled={submitting}>
-                {submitting ? 'Registering...' : '⛓ Register on Blockchain'}
+                {submitting ? 'Signing Transaction...' : isConnected ? '🦊 Sign & Register via MetaMask' : '⛓ Register Donor'}
               </button>
             </div>
           </div>
@@ -246,13 +326,10 @@ export default function Donors() {
               <input placeholder="Apollo Hospital Chennai" value={donateForm.hospital_name}
                 onChange={e => setDonateForm({ hospital_name: e.target.value })} />
             </div>
-            <div style={{ marginTop: 12, fontSize: 12, color: '#445566', fontFamily: 'Space Mono' }}>
-              ℹ️ This will create an immutable blood unit record on Ethereum. Expiry: 42 days.
-            </div>
             <div className="modal-actions">
               <button className="btn btn-outline" onClick={() => setShowDonate(false)}>Cancel</button>
               <button className="btn btn-primary" onClick={handleDonate} disabled={submitting}>
-                {submitting ? 'Recording...' : '⛓ Record on Chain'}
+                {submitting ? 'Recording...' : isConnected ? '🦊 Sign & Record on Chain' : '⛓ Record on Chain'}
               </button>
             </div>
           </div>

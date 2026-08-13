@@ -1,302 +1,135 @@
 # 🩸 BloodChain — Decentralized Blood Bank Management System
 
 > **Final Year Project | Anna University | Blockchain + Healthcare**
-> Built with Ethereum (Solidity), Node.js, React, MySQL
+> Built with Ethereum (Solidity), Node.js, Express, React 18, MySQL 8.0, and Socket.io
 
 ---
 
-## 📸 Features
+## 📸 Features & Modern Upgrades
 
 | Feature | Description |
 |---|---|
-| 🔗 Smart Contracts | Solidity contract on Ethereum — tamper-proof records |
-| 👤 Donor Registry | Register donors with blood group, on-chain identity |
-| 🩸 Blood Donations | Record each unit as an immutable blockchain entry |
-| 🏥 Hospital Network | Admin-verified hospitals with wallet-based auth |
-| 📋 Blood Requests | Hospital requests approved via smart contract |
-| 📊 Live Inventory | Real-time blood availability by group |
-| ⛓ Chain Ledger | Full transaction history on the blockchain |
-| 🌑 Dark UI | Crimson + Cyber dark theme, fully responsive |
+| 🦊 Client-Side MetaMask Signing | True decentralized execution — donors & hospitals sign on-chain txs using their browser wallet |
+| 🔗 Smart Contracts | Solidity contract (`BloodBank.sol`) on Ethereum — tamper-proof records with 42-day expiry |
+| 🛡 Encrypted Keystore & Auth | Private keys protected in Web3 keystore JSON files (`SECURITY.md`), JWT-protected admin API routes |
+| ⛓ Event-Driven DB Sync | Node.js `ethers` listener (`eventSync.js`) keeps MySQL automatically reconciled with Ethereum events |
+| 📱 QR Code Unit Traceability | Generate printable QR codes embedding unit ID and provenance chain-of-custody |
+| 🚨 Real-Time Socket.io Alerts | Live broadcast alerts for `CRITICAL` urgency blood requests without page refresh |
+| 🗺️ Geo-Matching Map View | Visual map showing hospital locations, supply density, and local donor pools |
+| 🤖 AI Demand Forecasting | FastAPI Python microservice predicting 30-day shortage trends by blood group |
+| 🧩 Compatibility Matching | Transfusion rules engine surfacing compatible donor groups for requested patient types |
+| 📜 Digital Certificates & CSV Export | Downloadable donor certificates of honor and automated CSV analytics export |
+| 📊 Real Chain Ledger | Live, paginated transaction log showing on-chain hashes, block numbers, gas, and status |
 
 ---
 
 ## 🛠 Tech Stack
 
 ```
-Frontend  : React 18, React Router, Recharts, Axios
-Backend   : Node.js, Express.js, MySQL2, Ethers.js v6
+Frontend  : React 18, React Router, Recharts, Axios, Ethers.js v6
+Backend   : Node.js, Express.js, Socket.io, MySQL2, Winston Logger, JWT
 Blockchain: Solidity 0.8.19, Hardhat, Ganache
 Database  : MySQL 8.0
+AI Service: Python 3.11, FastAPI, Uvicorn, Scikit-Learn
 ```
 
 ---
 
-## ⚙️ Prerequisites — Install These First
+## ⚙️ Environment Variables Setup
 
-1. **Node.js 18+** → https://nodejs.org
-2. **MySQL 8.0** → https://dev.mysql.com/downloads/
-3. **Ganache** (GUI) → https://trufflesuite.com/ganache/ *(or use Hardhat node)*
-4. **MetaMask** (browser) → https://metamask.io *(optional, for wallet interaction)*
+### Backend `.env` (`backend/.env`)
+
+```env
+PORT=5000
+NODE_ENV=development
+
+# MySQL Database
+DB_HOST=localhost
+DB_PORT=3306
+DB_USER=root
+DB_PASSWORD=your_mysql_password
+DB_NAME=bloodchain
+
+# Blockchain & Keystore
+BLOCKCHAIN_RPC_URL=http://127.0.0.1:7545
+CONTRACT_ADDRESS=0xYourDeployedAddress
+KEYSTORE_PASSWORD=your_keystore_passphrase
+
+# JWT Security
+JWT_SECRET=bloodchain_super_secret_key_2025
+JWT_EXPIRES_IN=7d
+ADMIN_PASSWORD=admin123
+
+# Forecasting Microservice
+FORECAST_SERVICE_URL=http://localhost:8000
+```
+
+### Frontend `.env` (`frontend/.env`)
+
+```env
+REACT_APP_API_URL=http://localhost:5000/api
+REACT_APP_DEMO_MODE=false
+```
 
 ---
 
-## 🚀 Setup & Run — Step by Step
+## 🚀 Setup & Execution Guide
 
-### Step 1 — Clone & Install Dependencies
+### Step 1 — Install Dependencies
 
 ```bash
-# In the project root folder (bloodchain/)
 npm run install:all
 ```
 
-This installs: Hardhat (root) + Express packages (backend) + React packages (frontend)
+### Step 2 — Initialize Database
 
----
-
-### Step 2 — Setup MySQL Database
-
-Open MySQL Workbench or terminal:
-
-```bash
-mysql -u root -p
-```
-
-Then run the schema file:
+Execute `backend/database.sql` and `backend/migrations/002_sync_state.sql` in MySQL Workbench or terminal:
 
 ```sql
-source /path/to/bloodchain/backend/database.sql
+source backend/database.sql;
+source backend/migrations/002_sync_state.sql;
 ```
 
-Or copy-paste the contents of `backend/database.sql` into MySQL Workbench and execute.
+### Step 3 — Generate Encrypted Keystore (Fix 1.5)
 
----
-
-### Step 3 — Start Ganache (Local Blockchain)
-
-**Option A — Ganache GUI:**
-1. Open Ganache
-2. Click "Quickstart Ethereum"
-3. Note the RPC URL (default: `http://127.0.0.1:7545`) and any account's private key
-
-**Option B — Hardhat Node (terminal):**
 ```bash
-npm run node
-# RPC will be at http://127.0.0.1:8545
+cd backend
+node scripts/generate-keystore.js 0xYourPrivateKey your_keystore_passphrase
 ```
-
----
 
 ### Step 4 — Deploy Smart Contract
 
 ```bash
-# For Ganache GUI:
-npm run deploy:ganache
-
-# For Hardhat node:
-npm run deploy:local
+npm run node # Start Hardhat node in a terminal
+npm run deploy:local # In a separate terminal
 ```
 
-✅ This will:
-- Compile `BloodBank.sol`
-- Deploy to local chain
-- Print the **CONTRACT_ADDRESS**
-- Auto-save ABI to `frontend/src/utils/BloodBankABI.json`
-
----
-
-### Step 5 — Configure Backend `.env`
+### Step 5 — Run Test Suites (Fix 1.7)
 
 ```bash
-cd backend
-cp .env.example .env
+npx hardhat test # Smart contract tests
+cd backend && npm test # API integration tests
 ```
 
-Edit `backend/.env`:
-
-```env
-PORT=5000
-DB_HOST=localhost
-DB_PORT=3306
-DB_USER=root
-DB_PASSWORD=your_mysql_password   # ← change this
-DB_NAME=bloodchain
-
-BLOCKCHAIN_RPC_URL=http://127.0.0.1:7545   # or 8545 for hardhat
-CONTRACT_ADDRESS=0xYourDeployedAddress      # ← from Step 4 output
-ADMIN_PRIVATE_KEY=0xYourGanachePrivateKey   # ← first account in Ganache
-
-JWT_SECRET=bloodchain_secret_2025
-JWT_EXPIRES_IN=7d
-```
-
----
-
-### Step 6 — Start Backend
+### Step 6 — Start Services
 
 ```bash
-# Open a new terminal
+# Terminal 1: Backend API & Socket Server
 npm run backend
-# Server starts at http://localhost:5000
-```
 
-Test it:
-```bash
-curl http://localhost:5000/api/health
-# → {"status":"ok","service":"BloodChain API"}
-```
-
----
-
-### Step 7 — Start Frontend
-
-```bash
-# Open another terminal
+# Terminal 2: React Frontend
 npm run frontend
-# React app starts at http://localhost:3000
+
+# Terminal 3 (Optional): AI Demand Forecasting Microservice
+cd forecasting
+python -m uvicorn main:app --port 8000
 ```
 
 Open **http://localhost:3000** in your browser 🎉
 
 ---
 
-## 📁 Project Structure
+## 📝 License & Security
 
-```
-bloodchain/
-├── contracts/
-│   └── BloodBank.sol          ← Solidity smart contract
-├── scripts/
-│   └── deploy.js              ← Hardhat deploy script
-├── artifacts/                 ← Auto-generated after compile
-├── hardhat.config.js
-├── package.json               ← Root (Hardhat + scripts)
-│
-├── backend/
-│   ├── server.js              ← Express API server
-│   ├── database.sql           ← MySQL schema + seed data
-│   ├── .env.example           ← Environment template
-│   └── package.json
-│
-└── frontend/
-    ├── public/
-    │   └── index.html
-    ├── src/
-    │   ├── App.js             ← Router + Layout
-    │   ├── App.css            ← Dark design system
-    │   ├── index.js
-    │   ├── pages/
-    │   │   ├── Dashboard.js   ← Stats + Charts
-    │   │   ├── Donors.js      ← Donor registry
-    │   │   ├── Hospitals.js   ← Hospital management
-    │   │   ├── Inventory.js   ← Blood unit ledger
-    │   │   ├── Requests.js    ← Blood request workflow
-    │   │   └── Blockchain.js  ← Chain transaction log
-    │   └── utils/
-    │       └── api.js         ← Axios API helpers
-    └── package.json
-```
-
----
-
-## 🔗 API Endpoints
-
-| Method | Endpoint | Description |
-|---|---|---|
-| GET | `/api/health` | Server health check |
-| GET | `/api/stats` | Dashboard statistics |
-| GET | `/api/inventory` | Blood inventory by group |
-| GET | `/api/donors` | All registered donors |
-| POST | `/api/donors/register` | Register a new donor |
-| POST | `/api/blood-units/donate` | Record a blood donation |
-| GET | `/api/hospitals` | All hospitals |
-| POST | `/api/hospitals/register` | Register a hospital |
-| PUT | `/api/hospitals/:wallet/verify` | Admin: verify hospital |
-| GET | `/api/requests` | All blood requests |
-| POST | `/api/requests` | Create blood request |
-| PUT | `/api/requests/:id/approve` | Admin: approve request |
-| PUT | `/api/requests/:id/reject` | Admin: reject request |
-
----
-
-## 🧠 Smart Contract Functions
-
-```solidity
-// Donor
-registerDonor(name, bloodGroup, age, contact)   // Gas: ~154k
-donateBlood(hospitalName)                        // Gas: ~98k
-
-// Hospital
-registerHospital(name, location)                 // Gas: ~134k
-requestBlood(bloodGroup, units, patient, urgency)// Gas: ~112k
-
-// Admin
-verifyHospital(address)                          // Gas: ~43k
-approveRequest(requestId)                        // Gas: ~87k
-rejectRequest(requestId, reason)                 // Gas: ~45k
-
-// View (free)
-getAvailableUnitsCount(bloodGroup)
-getTotalStats()
-getAllDonors()
-```
-
----
-
-## 🎯 Project Architecture
-
-```
-MetaMask Wallet
-      ↓
-React Frontend (localhost:3000)
-      ↓ Axios HTTP
-Express Backend (localhost:5000)
-      ↓              ↓
-   MySQL DB      Ethers.js
-  (bloodchain)       ↓
-               Smart Contract
-               (BloodBank.sol)
-                    ↓
-             Ethereum Network
-            (Ganache / Hardhat)
-```
-
----
-
-## 📊 Smart Contract — Data Flow
-
-```
-Donor Registration
-  → registerDonor() on-chain
-  → DonorRegistered event emitted
-  → Stored in MySQL donors table
-
-Blood Donation
-  → donateBlood() on-chain
-  → BloodUnit created with 42-day expiry
-  → BloodDonated event emitted
-  → Stored in MySQL blood_units table
-
-Hospital Request
-  → requestBlood() on-chain
-  → BloodRequested event emitted
-  → Admin reviews → approveRequest()
-  → Units assigned and marked used
-```
-
----
-
-## 🏆 For Viva / Presentation
-
-**Key Points to Highlight:**
-1. **Decentralization** — No single point of failure for blood records
-2. **Immutability** — Once donated, blood records cannot be altered
-3. **Transparency** — All transactions visible on blockchain
-4. **Smart Contracts** — Automated verification and allocation
-5. **42-day Expiry** — Enforced by contract, not manual process
-6. **Dual Storage** — MySQL for fast queries, Blockchain for trust
-
----
-
-## 📝 License
-
-Academic Project — LICET / Anna University
+Academic & Startup Open Source License — LICET / Anna University.
+For security policies and threat models, see [SECURITY.md](file:///Users/jothimani/blockchain-bbms/SECURITY.md) and [CHANGELOG.md](file:///Users/jothimani/blockchain-bbms/CHANGELOG.md).
