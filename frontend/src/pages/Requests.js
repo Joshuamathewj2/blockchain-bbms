@@ -1,18 +1,18 @@
 import React, { useState, useEffect } from 'react';
-import { getRequests, createRequest, approveRequest, rejectRequest } from '../utils/api';
+import { ethers } from 'ethers';
+import { useWallet } from '../context/WalletContext';
+import { getRequests, createRequest, syncRequest, approveRequest, rejectRequest } from '../utils/api';
+import ErrorBanner from '../components/ErrorBanner';
+import BloodBankABI from '../utils/BloodBankABI.json';
 
 const BLOOD_GROUPS = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
-
-const DEMO = [
-  { request_id: '0xreq01abcdef', requester_wallet: '0xbbbb...0001', hospital_name: 'Apollo Chennai', blood_group: 'O+', units_required: 2, patient_name: 'Patient A', urgency_level: 'CRITICAL', status: 'PENDING', requested_at: new Date().toISOString() },
-  { request_id: '0xreq02abcdef', requester_wallet: '0xbbbb...0002', hospital_name: 'Fortis Malar', blood_group: 'A+', units_required: 1, patient_name: 'Patient B', urgency_level: 'HIGH', status: 'APPROVED', requested_at: new Date(Date.now() - 3600000).toISOString() },
-  { request_id: '0xreq03abcdef', requester_wallet: '0xbbbb...0001', hospital_name: 'Apollo Chennai', blood_group: 'B-', units_required: 1, patient_name: 'Patient C', urgency_level: 'NORMAL', status: 'PENDING', requested_at: new Date(Date.now() - 7200000).toISOString() },
-  { request_id: '0xreq04abcdef', requester_wallet: '0xbbbb...0003', hospital_name: 'MIOT Hospital', blood_group: 'AB+', units_required: 3, patient_name: 'Patient D', urgency_level: 'CRITICAL', status: 'REJECTED', requested_at: new Date(Date.now() - 86400000).toISOString() },
-];
+const BG_MAP = { 'A+': 0, 'A-': 1, 'B+': 2, 'B-': 3, 'AB+': 4, 'AB-': 5, 'O+': 6, 'O-': 7 };
 
 export default function Requests() {
+  const { account, getSigner, isConnected } = useWallet();
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [showModal, setShowModal] = useState(false);
   const [filter, setFilter] = useState('ALL');
   const [submitting, setSubmitting] = useState(false);
@@ -29,24 +29,68 @@ export default function Requests() {
   };
 
   const load = () => {
+    setLoading(true);
     getRequests()
-      .then(r => setRequests(r.data))
-      .catch(() => setRequests(DEMO))
+      .then(r => {
+        setRequests(r.data);
+        setError(null);
+      })
+      .catch((err) => {
+        setError('Could not fetch blood requests from server.');
+        if (process.env.REACT_APP_DEMO_MODE === 'true') {
+          setRequests([
+            { request_id: '0xreq01abcdef', requester_wallet: '0xbbbb...0001', hospital_name: 'Apollo Chennai', blood_group: 'O+', units_required: 2, patient_name: 'Patient A', urgency_level: 'CRITICAL', status: 'PENDING', requested_at: new Date().toISOString() },
+            { request_id: '0xreq02abcdef', requester_wallet: '0xbbbb...0002', hospital_name: 'Fortis Malar', blood_group: 'A+', units_required: 1, patient_name: 'Patient B', urgency_level: 'HIGH', status: 'APPROVED', requested_at: new Date(Date.now() - 3600000).toISOString() },
+            { request_id: '0xreq03abcdef', requester_wallet: '0xbbbb...0001', hospital_name: 'Apollo Chennai', blood_group: 'B-', units_required: 1, patient_name: 'Patient C', urgency_level: 'NORMAL', status: 'PENDING', requested_at: new Date(Date.now() - 7200000).toISOString() },
+          ]);
+        }
+      })
       .finally(() => setLoading(false));
   };
+
   useEffect(() => { load(); }, []);
+
+  useEffect(() => {
+    if (account && !form.requester_wallet) {
+      setForm(f => ({ ...f, requester_wallet: account }));
+    }
+  }, [account]);
 
   const handleCreate = async () => {
     if (!form.requester_wallet || !form.blood_group) return addToast('Fill required fields', 'error');
     setSubmitting(true);
+    let txHash = null;
+
     try {
-      await createRequest(form);
-      addToast('Blood request submitted on blockchain!');
+      if (isConnected && BloodBankABI.address) {
+        try {
+          const signer = await getSigner();
+          if (signer) {
+            const contract = new ethers.Contract(BloodBankABI.address, BloodBankABI.abi, signer);
+            const tx = await contract.requestBlood(
+              BG_MAP[form.blood_group],
+              parseInt(form.units_required),
+              form.patient_name || '',
+              form.urgency_level || 'NORMAL'
+            );
+            addToast('Request tx submitted to MetaMask. Confirming...');
+            await tx.wait();
+            txHash = tx.hash;
+            addToast(`Request recorded on-chain! TX: ${txHash.slice(0, 10)}...`);
+          }
+        } catch (bcErr) {
+          console.warn('Blockchain execution warning:', bcErr);
+        }
+      }
+
+      await syncRequest({ ...form, txHash });
+      addToast('Blood request submitted successfully!');
       setShowModal(false);
-      setForm({ requester_wallet: '', hospital_name: '', blood_group: 'A+', units_required: 1, patient_name: '', urgency_level: 'NORMAL' });
+      setForm({ requester_wallet: account || '', hospital_name: '', blood_group: 'A+', units_required: 1, patient_name: '', urgency_level: 'NORMAL' });
       load();
-    } catch { addToast('Submission failed', 'error'); }
-    finally { setSubmitting(false); }
+    } catch (e) {
+      addToast('Submission failed', 'error');
+    } finally { setSubmitting(false); }
   };
 
   const handleApprove = async (id) => {
@@ -54,15 +98,19 @@ export default function Requests() {
       await approveRequest(id);
       addToast('Request approved! Blood units allocated.');
       load();
-    } catch { addToast('Approval failed', 'error'); }
+    } catch (e) {
+      addToast(e.response?.data?.error || 'Approval failed (Admin token required)', 'error');
+    }
   };
 
   const handleReject = async (id) => {
     try {
-      await rejectRequest(id);
+      await rejectRequest(id, 'Admin rejected');
       addToast('Request rejected.', 'info');
       load();
-    } catch { addToast('Rejection failed', 'error'); }
+    } catch (e) {
+      addToast(e.response?.data?.error || 'Rejection failed (Admin token required)', 'error');
+    }
   };
 
   const filtered = filter === 'ALL' ? requests : requests.filter(r => r.status === filter);
@@ -89,8 +137,9 @@ export default function Requests() {
         <div className="page-sub">Hospital blood request management via smart contracts</div>
       </div>
 
+      <ErrorBanner message={error} onRetry={load} />
+
       <div style={{ display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap', justifyContent: 'space-between' }}>
-        {/* Filter tabs */}
         <div style={{ display: 'flex', gap: 8 }}>
           {['ALL', 'PENDING', 'APPROVED', 'REJECTED'].map(s => (
             <button key={s}
@@ -177,6 +226,11 @@ export default function Requests() {
                 <label>Hospital Wallet Address *</label>
                 <input placeholder="0x..." value={form.requester_wallet}
                   onChange={e => setForm({ ...form, requester_wallet: e.target.value })} />
+                {isConnected && (
+                  <span style={{ fontSize: 11, color: '#00c97a', marginTop: 4 }}>
+                    Connected to MetaMask ({account.slice(0, 6)}...{account.slice(-4)})
+                  </span>
+                )}
               </div>
               <div className="form-group">
                 <label>Hospital Name</label>
@@ -209,7 +263,7 @@ export default function Requests() {
             <div className="modal-actions">
               <button className="btn btn-outline" onClick={() => setShowModal(false)}>Cancel</button>
               <button className="btn btn-primary" onClick={handleCreate} disabled={submitting}>
-                {submitting ? 'Submitting...' : '⛓ Submit Request'}
+                {submitting ? 'Submitting...' : isConnected ? '🦊 Sign & Request via MetaMask' : '⛓ Submit Request'}
               </button>
             </div>
           </div>

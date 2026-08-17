@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line } from 'recharts';
-import { getStats, getInventory, getRequests } from '../utils/api';
+import { getStats, getInventory, getRequests, getForecast, getExportCsvUrl } from '../utils/api';
+import ErrorBanner from '../components/ErrorBanner';
 
 const BG_COLORS = {
   'A+':'#c0392b','A-':'#922b21','B+':'#1a5276','B-':'#154360',
@@ -11,36 +12,44 @@ export default function Dashboard() {
   const [stats, setStats] = useState(null);
   const [inventory, setInventory] = useState([]);
   const [requests, setRequests] = useState([]);
+  const [forecast, setForecast] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
-  useEffect(() => {
-    Promise.all([getStats(), getInventory(), getRequests()])
-      .then(([s, inv, req]) => {
+  const loadData = () => {
+    setLoading(true);
+    Promise.all([getStats(), getInventory(), getRequests(), getForecast({ blood_group: 'O+' })])
+      .then(([s, inv, req, f]) => {
         setStats(s.data);
         setInventory(inv.data);
         setRequests(req.data);
+        setForecast(f.data?.forecast || []);
+        setError(null);
       })
-      .catch(() => {
-        // Fallback demo data
-        setStats({ totalDonors: 248, totalHospitals: 34, availableUnits: 1423, totalRequests: 387, livesSaved: 312 });
-        setInventory([
-          { blood_group: 'A+', available_units: 312, used_units: 45, expired_units: 3 },
-          { blood_group: 'A-', available_units: 87, used_units: 12, expired_units: 1 },
-          { blood_group: 'B+', available_units: 245, used_units: 38, expired_units: 2 },
-          { blood_group: 'B-', available_units: 43, used_units: 7, expired_units: 0 },
-          { blood_group: 'AB+', available_units: 198, used_units: 29, expired_units: 4 },
-          { blood_group: 'AB-', available_units: 22, used_units: 4, expired_units: 0 },
-          { blood_group: 'O+', available_units: 418, used_units: 67, expired_units: 5 },
-          { blood_group: 'O-', available_units: 98, used_units: 18, expired_units: 2 },
-        ]);
-        setRequests([
-          { request_id: '0xreq01', hospital_name: 'Apollo Chennai', blood_group: 'O+', urgency_level: 'CRITICAL', status: 'PENDING', patient_name: 'Patient A', requested_at: new Date().toISOString() },
-          { request_id: '0xreq02', hospital_name: 'Fortis Malar', blood_group: 'A+', urgency_level: 'HIGH', status: 'APPROVED', patient_name: 'Patient B', requested_at: new Date(Date.now()-3600000).toISOString() },
-          { request_id: '0xreq03', hospital_name: 'MIOT Hospital', blood_group: 'B-', urgency_level: 'NORMAL', status: 'PENDING', patient_name: 'Patient C', requested_at: new Date(Date.now()-7200000).toISOString() },
-        ]);
+      .catch((err) => {
+        setError('Could not connect to BloodChain API server.');
+        if (process.env.REACT_APP_DEMO_MODE === 'true') {
+          setStats({ totalDonors: 248, totalHospitals: 34, availableUnits: 1423, totalRequests: 387, livesSaved: 312 });
+          setInventory([
+            { blood_group: 'A+', available_units: 312, used_units: 45, expired_units: 3 },
+            { blood_group: 'A-', available_units: 87, used_units: 12, expired_units: 1 },
+            { blood_group: 'B+', available_units: 245, used_units: 38, expired_units: 2 },
+            { blood_group: 'B-', available_units: 43, used_units: 7, expired_units: 0 },
+            { blood_group: 'AB+', available_units: 198, used_units: 29, expired_units: 4 },
+            { blood_group: 'AB-', available_units: 22, used_units: 4, expired_units: 0 },
+            { blood_group: 'O+', available_units: 418, used_units: 67, expired_units: 5 },
+            { blood_group: 'O-', available_units: 98, used_units: 18, expired_units: 2 },
+          ]);
+          setRequests([
+            { request_id: '0xreq01', hospital_name: 'Apollo Chennai', blood_group: 'O+', urgency_level: 'CRITICAL', status: 'PENDING', patient_name: 'Patient A', requested_at: new Date().toISOString() },
+            { request_id: '0xreq02', hospital_name: 'Fortis Malar', blood_group: 'A+', urgency_level: 'HIGH', status: 'APPROVED', patient_name: 'Patient B', requested_at: new Date(Date.now()-3600000).toISOString() },
+          ]);
+        }
       })
       .finally(() => setLoading(false));
-  }, []);
+  };
+
+  useEffect(() => { loadData(); }, []);
 
   const trendData = [
     { month: 'Jan', donations: 120, requests: 80 },
@@ -71,10 +80,19 @@ export default function Dashboard() {
 
   return (
     <div>
-      <div className="page-header">
-        <div className="page-title">🩸 BloodChain <span>Dashboard</span></div>
-        <div className="page-sub">Real-time blood bank analytics secured on Ethereum blockchain</div>
+      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <div>
+          <div className="page-title">🩸 BloodChain <span>Dashboard</span></div>
+          <div className="page-sub">Real-time blood bank analytics secured on Ethereum blockchain</div>
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <a href={getExportCsvUrl()} download className="btn btn-outline btn-sm" style={{ textDecoration: 'none' }}>
+            📊 Export CSV
+          </a>
+        </div>
       </div>
+
+      <ErrorBanner message={error} onRetry={loadData} />
 
       {/* Stats */}
       <div className="stats-grid">
@@ -123,7 +141,26 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Inventory quick view */}
+      {/* AI Demand Forecast (Feature 6) */}
+      {forecast.length > 0 && (
+        <div className="card" style={{ marginBottom: 20 }}>
+          <div className="card-header">
+            <div className="card-title">🤖 AI-Powered 30-Day Demand & Shortage Forecast</div>
+            <span className="badge badge-warn">Predictive Model Active</span>
+          </div>
+          <ResponsiveContainer width="100%" height={180}>
+            <BarChart data={forecast}>
+              <XAxis dataKey="day" tick={{ fill: '#445566', fontSize: 11 }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fill: '#445566', fontSize: 11 }} axisLine={false} tickLine={false} />
+              <Tooltip content={<CustomTooltip />} />
+              <Bar dataKey="predictedDemand" fill="#e74c3c" name="Predicted Demand" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="predictedSupply" fill="#00c97a" name="Predicted Supply" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      {/* Live Inventory Quick View */}
       <div className="card">
         <div className="card-header">
           <div className="card-title">Live Blood Inventory</div>
@@ -145,48 +182,6 @@ export default function Dashboard() {
               </div>
             );
           })}
-        </div>
-      </div>
-
-      {/* Recent requests */}
-      <div className="card">
-        <div className="card-header">
-          <div className="card-title">Recent Blood Requests</div>
-          <a href="/requests" className="btn btn-outline btn-sm">Manage →</a>
-        </div>
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Hospital</th><th>Patient</th><th>Blood</th><th>Urgency</th><th>Status</th><th>Time</th>
-              </tr>
-            </thead>
-            <tbody>
-              {requests.slice(0, 5).map(r => (
-                <tr key={r.request_id}>
-                  <td><strong>{r.hospital_name || '—'}</strong></td>
-                  <td>{r.patient_name || '—'}</td>
-                  <td><span className="bg-badge">{r.blood_group}</span></td>
-                  <td>
-                    <span className={`urg-${(r.urgency_level || 'normal').toLowerCase()}`}>
-                      {r.urgency_level}
-                    </span>
-                  </td>
-                  <td>
-                    <span className={`badge badge-${
-                      r.status === 'APPROVED' ? 'green' :
-                      r.status === 'REJECTED' ? 'red' :
-                      r.status === 'FULFILLED' ? 'cyan' : 'warn'
-                    }`}>{r.status}</span>
-                  </td>
-                  <td style={{ fontFamily: 'Space Mono', fontSize: 11 }}>
-                    {new Date(r.requested_at).toLocaleTimeString()}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {requests.length === 0 && <div className="empty"><div className="empty-icon">📭</div>No requests yet</div>}
         </div>
       </div>
     </div>

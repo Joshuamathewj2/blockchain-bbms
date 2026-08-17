@@ -1,9 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { getHospitals, registerHospital, verifyHospital } from '../utils/api';
+import { ethers } from 'ethers';
+import { useWallet } from '../context/WalletContext';
+import { getHospitals, registerHospital, syncHospital, verifyHospital } from '../utils/api';
+import ErrorBanner from '../components/ErrorBanner';
+import BloodBankABI from '../utils/BloodBankABI.json';
 
 export default function Hospitals() {
+  const { account, getSigner, isConnected } = useWallet();
   const [hospitals, setHospitals] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [showModal, setShowModal] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [toasts, setToasts] = useState([]);
@@ -18,26 +24,59 @@ export default function Hospitals() {
   };
 
   const load = () => {
+    setLoading(true);
     getHospitals()
-      .then(r => setHospitals(r.data))
-      .catch(() => setHospitals([
-        { id: 1, wallet_address: '0xbbbb...0001', name: 'Apollo Hospital Chennai', registration_number: 'APCH-2024', location: 'Greams Road, Chennai', is_verified: true, total_requests: 45, total_received: 38 },
-        { id: 2, wallet_address: '0xbbbb...0002', name: 'Fortis Malar Hospital', registration_number: 'FMCH-2024', location: 'Adyar, Chennai', is_verified: true, total_requests: 29, total_received: 25 },
-        { id: 3, wallet_address: '0xbbbb...0003', name: 'MIOT Hospital', registration_number: 'MIOT-2024', location: 'Manapakkam, Chennai', is_verified: false, total_requests: 10, total_received: 0 },
-      ]))
+      .then(r => {
+        setHospitals(r.data);
+        setError(null);
+      })
+      .catch((err) => {
+        setError('Could not load hospital network registry.');
+        if (process.env.REACT_APP_DEMO_MODE === 'true') {
+          setHospitals([
+            { id: 1, wallet_address: '0xbbbb000000000000000000000000000000000001', name: 'Apollo Hospital Chennai', registration_number: 'APCH-2024', location: 'Greams Road, Chennai', is_verified: true, total_requests: 45, total_received: 38 },
+            { id: 2, wallet_address: '0xbbbb000000000000000000000000000000000002', name: 'Fortis Malar Hospital', registration_number: 'FMCH-2024', location: 'Adyar, Chennai', is_verified: true, total_requests: 29, total_received: 25 },
+            { id: 3, wallet_address: '0xbbbb000000000000000000000000000000000003', name: 'MIOT Hospital', registration_number: 'MIOT-2024', location: 'Manapakkam, Chennai', is_verified: false, total_requests: 10, total_received: 0 },
+          ]);
+        }
+      })
       .finally(() => setLoading(false));
   };
 
   useEffect(() => { load(); }, []);
 
+  useEffect(() => {
+    if (account && !form.wallet_address) {
+      setForm(f => ({ ...f, wallet_address: account }));
+    }
+  }, [account]);
+
   const handleRegister = async () => {
     if (!form.wallet_address || !form.name) return addToast('Fill required fields', 'error');
     setSubmitting(true);
+    let txHash = null;
+
     try {
-      await registerHospital(form);
+      if (isConnected && BloodBankABI.address) {
+        try {
+          const signer = await getSigner();
+          if (signer) {
+            const contract = new ethers.Contract(BloodBankABI.address, BloodBankABI.abi, signer);
+            const tx = await contract.registerHospital(form.name, form.location || '');
+            addToast('Hospital registration tx sent to MetaMask. Confirming...');
+            await tx.wait();
+            txHash = tx.hash;
+            addToast(`Hospital registered on-chain! TX: ${txHash.slice(0, 10)}...`);
+          }
+        } catch (bcErr) {
+          console.warn('Blockchain execution warning:', bcErr);
+        }
+      }
+
+      await syncHospital({ ...form, txHash });
       addToast('Hospital registered! Awaiting admin verification.');
       setShowModal(false);
-      setForm({ wallet_address: '', name: '', registration_number: '', location: '', contact: '', email: '' });
+      setForm({ wallet_address: account || '', name: '', registration_number: '', location: '', contact: '', email: '' });
       load();
     } catch (e) {
       addToast('Registration failed', 'error');
@@ -47,9 +86,11 @@ export default function Hospitals() {
   const handleVerify = async (wallet) => {
     try {
       await verifyHospital(wallet);
-      addToast('Hospital verified on blockchain!');
+      addToast('Hospital verified on blockchain & database!');
       load();
-    } catch (e) { addToast('Verification failed', 'error'); }
+    } catch (e) {
+      addToast(e.response?.data?.error || 'Verification failed (Admin token required)', 'error');
+    }
   };
 
   return (
@@ -66,6 +107,8 @@ export default function Hospitals() {
         <div className="page-title">✦ <span>Hospital</span> Network</div>
         <div className="page-sub">Verified healthcare institutions on the BloodChain network</div>
       </div>
+
+      <ErrorBanner message={error} onRetry={load} />
 
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
         <button className="btn btn-primary" onClick={() => setShowModal(true)}>+ Register Hospital</button>
@@ -131,6 +174,11 @@ export default function Hospitals() {
                 <label>Wallet Address *</label>
                 <input placeholder="0x..." value={form.wallet_address}
                   onChange={e => setForm({ ...form, wallet_address: e.target.value })} />
+                {isConnected && (
+                  <span style={{ fontSize: 11, color: '#00c97a', marginTop: 4 }}>
+                    Connected to MetaMask ({account.slice(0, 6)}...{account.slice(-4)})
+                  </span>
+                )}
               </div>
               <div className="form-group">
                 <label>Hospital Name *</label>
@@ -147,21 +195,11 @@ export default function Hospitals() {
                 <input placeholder="City, State" value={form.location}
                   onChange={e => setForm({ ...form, location: e.target.value })} />
               </div>
-              <div className="form-group">
-                <label>Contact</label>
-                <input placeholder="+91 XXXXX" value={form.contact}
-                  onChange={e => setForm({ ...form, contact: e.target.value })} />
-              </div>
-              <div className="form-group">
-                <label>Email</label>
-                <input type="email" placeholder="admin@hospital.com" value={form.email}
-                  onChange={e => setForm({ ...form, email: e.target.value })} />
-              </div>
             </div>
             <div className="modal-actions">
               <button className="btn btn-outline" onClick={() => setShowModal(false)}>Cancel</button>
               <button className="btn btn-primary" onClick={handleRegister} disabled={submitting}>
-                {submitting ? 'Registering...' : '⛓ Register on Chain'}
+                {submitting ? 'Registering...' : isConnected ? '🦊 Sign & Register via MetaMask' : '⛓ Register Hospital'}
               </button>
             </div>
           </div>
